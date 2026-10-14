@@ -68,6 +68,14 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 )
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/Modules/motor.c
+    Core/Src/Modules/encoder.c
+    Core/Src/Modules/speed_control.c
+    Core/Src/Modules/button.c
+    Core/Src/Modules/car.c
+    Core/Src/Modules/line_follow.c
+    Core/Src/Modules/line_sensor.c
+    Core/Src/Modules/line_calibration.c
+    Core/Src/Modules/line_calibration_store.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

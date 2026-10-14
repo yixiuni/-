@@ -56,8 +56,11 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 48K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 256K
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 254K /* final 2 KiB reserved for learned line thresholds */
 }
+
+__line_cal_start__ = 0x0803F800;
+__line_cal_end__ = 0x08040000;
 
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */

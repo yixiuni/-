@@ -19,11 +19,14 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "motor.h"
+#include "car.h"
+#include "line_sensor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -88,17 +91,13 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM3_Init();
+  MX_TIM4_Init();
+  MX_TIM8_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
-Motor_Init();
-HAL_Delay(2000);
-
-HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
-Motor_SetOutput(50, 50);
-HAL_Delay(2000);
-
-Motor_Stop();
-HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
-  /* USER CODE END 2 */
+  Car_Init();
+  LineSensor_Init(HAL_GetTick());
+/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -107,9 +106,10 @@ HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-   
+    LineSensor_Update(HAL_GetTick());
+    Car_Update(HAL_GetTick());
   }
-  /* USER CODE END 3 */
+/* USER CODE END 3 */
 }
 
 /**
@@ -162,7 +162,10 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  if (htim3.Instance == TIM3)
+  {
+    Motor_Stop();
+  }
   __disable_irq();
   while (1)
   {
