@@ -29,7 +29,7 @@ $replay = if ($ReplayFile) { @(Get-Content -LiteralPath $ReplayFile -Raw | Conve
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
 Write-Host 'Watching calibration. Read-only HOTPLUG: no reset, download, halt or motor command.'
-Write-Host 'Park on white. Hold main USER until LED1 FAST flashes (~3 seconds), then release and sweep for 10 seconds.'
+Write-Host 'Park on white. Hold USER >=6 seconds and RELEASE. Remain still on white for 1 second, then sweep black/white for 10 seconds.'
 Write-Host 'Keep power on. Do not press RESET or flash firmware during this observation. Ctrl+C stops watching.'
 Write-Host 'Expected: NotLearned -> WhiteReference -> Sweeping -> Ready or Failed.'
 Write-Host "Log: $LogPath"

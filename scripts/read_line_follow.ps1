@@ -12,8 +12,8 @@ if ($Watch) {
     if (-not $LogPath) { $LogPath = Join-Path $ProjectRoot ('logs\line-follow-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.jsonl') }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent ([System.IO.Path]::GetFullPath($LogPath))) | Out-Null
     if (Test-Path -LiteralPath $LogPath) { throw "Log already exists: $LogPath" }
-    Write-Host 'Read-only observation. Center the black line under S4/S5, then SHORT press USER to start/stop.'
-    Write-Host 'Long USER press still starts calibration. Do not hold USER to start driving.'
+    Write-Host 'Read-only observation. Align the sensor over the START stripe, then SHORT press USER to start/stop.'
+    Write-Host 'Hold 2-6s/release = laps; double click = speed; hold >=6s/release = calibration.'
     Write-Host 'The watcher ending does not stop the car. Short press USER to stop.'
     Write-Host "Log: $LogPath"
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -24,9 +24,10 @@ if ($Watch) {
             try {
                 $r = & $PSCommandPath -ProjectRoot $ProjectRoot -AsJson | ConvertFrom-Json
                 [ordered]@{ Time = $stamp; Snapshot = $r } | ConvertTo-Json -Depth 4 -Compress | Add-Content -LiteralPath $LogPath -Encoding UTF8
-                Write-Host ("{0} {1,-13} stop={2,-17} pos={3,5} target={4,4}/{5,-4} speed={6,4}/{7,-4} PWM={8,2}/{9,-2}" -f
+                Write-Host ("{0} {1,-13} stop={2,-17} pos={3,5} target={4,4}/{5,-4} speed={6,4}/{7,-4} PWM={8,2}/{9,-2} pending={10}:{11}ms mask={12}/{13}" -f
                     $stamp, $r.State, $r.Stop_reason, $r.Position_left_negative, $r.Left_target_cps, $r.Right_target_cps,
-                    $r.Left_measured_cps, $r.Right_measured_cps, $r.Left_PWM_percent, $r.Right_PWM_percent)
+                    $r.Left_measured_cps, $r.Right_measured_cps, $r.Left_PWM_percent, $r.Right_PWM_percent,
+                    $r.Pending_reason, $r.Pending_ms, $r.Black_mask_hex, $r.Selected_mask_hex)
                 $last = $r
             } catch {
                 $message = $_.Exception.Message
@@ -53,7 +54,7 @@ if ($DumpFile) {
     $address = '0x' + $symbol.Groups[1].Value
     $programmer = Join-Path $env:LOCALAPPDATA 'stm32cube\bundles\programmer\2.23.0\bin\STM32_Programmer_CLI.exe'
     if (-not (Test-Path -LiteralPath $programmer)) { throw "Programmer not found: $programmer" }
-    $dumpLines = & $programmer -c port=SWD mode=HOTPLUG -r32 $address 0x60 2>&1
+    $dumpLines = & $programmer -c port=SWD mode=HOTPLUG -r32 $address 0x80 2>&1
     if ($LASTEXITCODE -ne 0) { $dumpLines | Out-Host; throw 'ST-LINK read failed. End any active debugging session.' }
 }
 $words = [System.Collections.Generic.List[uint32]]::new()
@@ -63,23 +64,27 @@ foreach ($line in $dumpLines) {
         foreach ($word in ($m.Groups[1].Value.Trim() -split '\s+')) { $words.Add([Convert]::ToUInt32($word, 16)) }
     }
 }
-if ($words.Count -ne 24 -or $words[0] -ne 0x4C465731 -or $words[1] -ne 1) { throw 'Line-follow record mismatch: flash the same Debug ELF as the current map.' }
+if ($words.Count -ne 32) { throw "Incomplete line-follow record: $($words.Count)/32 words." }
+if ($words[0] -ne 0x4C465731 -or $words[1] -notin @(3,4)) {
+    throw ('Line-follow record mismatch: magic=0x{0:X8}, version={1}; expected 0x4C465731/version 3 or 4. Rebuild and flash the matching Debug ELF.' -f $words[0],$words[1])
+}
 $states = @('Idle', 'Following', 'Stopped', 'Fault', 'StartRejected')
-$reasons = @('None', 'USER', 'NotCalibrated', 'SensorStale', 'NoLine', 'AmbiguousLine', 'SpeedFault', 'Calibrating')
+$reasons = @('None', 'USER', 'NotCalibrated', 'SensorStale', 'NoLine', 'AmbiguousLine', 'SpeedFault', 'Calibrating', 'LapsComplete', 'MarkerTimeout', 'NeedStartMarker','DistanceNotCalibrated','LandmarkMissing','PositionFailed')
 $faults = @('None', 'LeftNoFeedback', 'RightNoFeedback', 'ReversedFeedback', 'EncoderSampleTimeout', 'BadTarget')
-if ($words[2] -ge $states.Count -or $words[3] -ge $reasons.Count -or $words[20] -ge $faults.Count) { throw 'Invalid diagnostic state.' }
+if ($words[2] -ge $states.Count -or $words[3] -ge $reasons.Count -or $words[20] -ge $faults.Count -or $words[27] -ge $reasons.Count -or $words[31] -ge $reasons.Count) { throw 'Invalid diagnostic state.' }
 function Signed32([uint32]$v) { [BitConverter]::ToInt32([BitConverter]::GetBytes($v), 0) }
 $result = [pscustomobject][ordered]@{
     Line_follow_version = $words[1]
     State = $states[$words[2]]
     Stop_reason = $reasons[$words[3]]
     Black_mask_hex = '0x{0:X2}' -f $words[4]
+    Selected_mask_hex = '0x{0:X2}' -f $words[24]
     Active_channels = $words[5]
     Position_left_negative = Signed32 $words[6]
     Steering_right_positive_cps = Signed32 $words[7]
     Base_cps = $words[8]
-    Left_target_cps = $words[9]
-    Right_target_cps = $words[10]
+    Left_target_cps = Signed32 $words[9]
+    Right_target_cps = Signed32 $words[10]
     Last_control_frame_age_ms = $words[11]
     Control_updates = $words[12]
     Uptime_ms = $words[13]
@@ -92,9 +97,16 @@ $result = [pscustomobject][ordered]@{
     Start_rejections = $words[21]
     User_stops = $words[22]
     Automatic_stops = $words[23]
+    Ignored_extra_group_frames = $words[25]
+    Uncertain_frames = $words[26]
+    Pending_reason = $reasons[$words[27]]
+    Pending_ms = $words[28]
+    Recovered_transients = $words[29]
+    Last_uncertain_mask_hex = '0x{0:X2}' -f $words[30]
+    Last_uncertain_reason = $reasons[$words[31]]
 }
 if ($AsJson) { $result | ConvertTo-Json } else {
     $result | Format-List
-    Write-Host 'S1 = vehicle left; S8 = vehicle right. USER short press starts/stops line following.'
+    Write-Host 'S1 = left; S8 = right. Start on the transverse stripe. Single click runs/stops; double click sets speed.'
     Write-Host 'Stop diagnostics retain the last targets. State/PWM indicate whether motors are running.'
 }

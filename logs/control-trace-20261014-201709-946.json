@@ -1,0 +1,13 @@
+{
+  "Summary": {
+    "Trace_version": 1,
+    "Saved_samples": 0,
+    "Total_samples": 0,
+    "Target_cps": 0,
+    "Stop_reason": 0,
+    "Nominal_sample_period_ms": 20,
+    "First_time_ms": null,
+    "Last_time_ms": null
+  },
+  "Frames": []
+}

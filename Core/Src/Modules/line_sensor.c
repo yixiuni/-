@@ -9,7 +9,7 @@
  * UART4 is owned here; do not also call HAL_UART_Receive[_IT]. */
 #define RX_ERROR_BITS (USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE)
 #define BOOT_LISTEN_MS 1000U
-#define COMMAND_PERIOD_MS 50U
+#define COMMAND_PERIOD_MS 10U
 #define RESPONSE_TIMEOUT_MS 250U
 #define BYTE_TIMEOUT_MS 30U
 #define FRESH_MS 500U

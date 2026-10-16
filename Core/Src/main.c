@@ -27,6 +27,8 @@
 #include "motor.h"
 #include "car.h"
 #include "line_sensor.h"
+#include "task2.h"
+#include "mode2.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,6 +99,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   Car_Init();
   LineSensor_Init(HAL_GetTick());
+  Mode2_Init(HAL_GetTick());
 /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -107,7 +110,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     LineSensor_Update(HAL_GetTick());
-    Car_Update(HAL_GetTick());
+    /* Dedicated low-speed mode 2 checkout. Explicit USER start required. */
+    Mode2_Update(HAL_GetTick());
   }
 /* USER CODE END 3 */
 }

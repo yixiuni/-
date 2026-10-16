@@ -13,5 +13,8 @@ void Motor_SetOutput(int16_t left, int16_t right);
 
 /* 停止两个电机 */
 void Motor_Stop(void);
+/* AT8236 IN1=IN2=high: both outputs low, electrical braking.
+ * Use after speed control has been stopped. Motor_Stop/start releases it. */
+void Motor_Brake(void);
 
 #endif

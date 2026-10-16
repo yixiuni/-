@@ -103,9 +103,9 @@ if ($AsJson) { $result | ConvertTo-Json -Depth 4 } else {
     $result | Select-Object * -ExcludeProperty Channels | Format-List
     $rows | Select-Object Channel, Raw, Learned_low, Learned_high, Threshold, Black_strength_0_to_1000, Black | Format-Table -AutoSize
     if ($words[38] -eq 4) { $rows | Select-Object Channel, Latest_white_median, Latest_white_spread | Format-Table -AutoSize }
-    Write-Host 'Park on white at normal height. Hold main USER until LED1 flashes (~3 seconds), then release.'
+    Write-Host 'Park on white at normal height. Hold USER >=6 seconds, then release; remain still on white for 1 second until fast flashing.'
     Write-Host 'During 10 seconds of fast flashing, sweep all eight probes over black and white several times.'
     Write-Host 'Steady LED1 = Ready; slow flashing = Failed or save error. KEY on sensor is not needed.'
-    Write-Host 'Learning keeps motors stopped. A short USER press starts/stops LINE FOLLOWING; center the black line before starting.'
+    Write-Host 'Learning keeps motors stopped. Single click starts/stops at START stripe; double click sets speed; hold 2-6s/release sets laps.'
     Write-Host 'Software black bits are separate from the module LEDs/digital thresholds. S1..S8 order is not vehicle orientation.'
 }

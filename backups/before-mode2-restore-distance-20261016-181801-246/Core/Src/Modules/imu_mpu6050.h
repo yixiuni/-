@@ -1,0 +1,22 @@
+#ifndef IMU_MPU6050_H
+#define IMU_MPU6050_H
+#include <stdint.h>
+enum { IMU_BOOT, IMU_RESET_WAIT, IMU_SETTLE, IMU_CALIBRATING, IMU_READY, IMU_FAULT, IMU_SIGNAL_RESET_WAIT };
+enum { IMU_OK, IMU_NO_ACK, IMU_BAD_ID, IMU_BUS_ERROR, IMU_CONFIG_ERROR,
+       IMU_SAMPLE_GAP, IMU_GYRO_SATURATED, IMU_CLOCK_ERROR, IMU_BUS_STUCK };
+extern volatile uint32_t imu_diag[32];
+extern volatile uint32_t imu_raw_diag[64];
+extern volatile uint32_t imu_gyro_test[32];
+typedef struct {
+    uint32_t state, reason, device_fault, last_ms, age_ms, accel_mask;
+    float yaw, rate, bias_dps;
+} ImuGyroSample;
+/* Main-loop only, after Imu_Update. Diagnostics have a separate 20 ms cadence. */
+void Imu_GetGyroSample(uint32_t now_ms, ImuGyroSample *sample);
+void Imu_Init(uint32_t now_ms);
+void Imu_Update(uint32_t now_ms);
+void Imu_Calibrate(uint32_t now_ms);
+void Imu_Zero(void);
+void Imu_GyroTestBegin(uint32_t now_ms);
+void Imu_GyroTestZero(uint32_t now_ms);
+#endif

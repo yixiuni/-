@@ -39,6 +39,18 @@ void Motor_Stop(void)
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
 }
 
+void Motor_Brake(void)
+{
+    /* C10B schematic U5/U6: AT8236. Datasheet H-bridge truth table:
+     * IN1=IN2=1 -> OUT1=OUT2=L (brake); 0/0 would coast.
+     * PWM1 active-high with CCR=ARR+1 keeps both inputs high. */
+    uint32_t high=__HAL_TIM_GET_AUTORELOAD(&htim3)+1U;
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,high);
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,high);
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_3,high);
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,high);
+}
+
 void Motor_Init(void)
 {
     Motor_Stop();

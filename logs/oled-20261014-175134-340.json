@@ -1,0 +1,19 @@
+﻿{
+    "OLED_driver_version":  2,
+    "Stage":  "Ready",
+    "Uptime_ms":  36355,
+    "Frames_sent":  2,
+    "Bytes_sent":  2545,
+    "Max_update_us":  2901,
+    "Transfer_pending":  false,
+    "GPIO_configuration_matches":  true,
+    "PB3_DC_mode":  "0x2",
+    "PB4_RST_mode":  "0x2",
+    "PB5_SDA_mode":  "0x2",
+    "PC14_SCL_mode":  "0x2",
+    "Reset_output_high":  true,
+    "SWO_trace_pins_enabled":  false,
+    "Trace_was_enabled_at_init":  false,
+    "LSE_enabled":  false,
+    "Transfer_offset":  0
+}

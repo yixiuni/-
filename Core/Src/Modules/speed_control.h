@@ -2,6 +2,7 @@
 #define SPEED_CONTROL_H
 
 #include <stdint.h>
+#define SPEED_CONTROL_MAX_CPS 3200U
 
 typedef enum
 {
@@ -32,6 +33,13 @@ typedef struct
 } Speed_ControlData;
 
 extern volatile Speed_ControlData speed_control;
+/* Captured before Stop clears PWM/integrals; retained until the next start. */
+typedef struct {
+    uint32_t mode, sample_ms, fault, left_idle_ms, right_idle_ms;
+    int32_t left_pwm, right_pwm, left_reference, right_reference;
+    int32_t left_cps, right_cps, left_integral_milli, right_integral_milli;
+} Speed_FaultData;
+extern volatile Speed_FaultData speed_fault_data;
 
 /* Forward-only straight test with cumulative wheel-count synchronization.
  * Units: normalized encoder counts/second.
@@ -39,14 +47,24 @@ extern volatile Speed_ControlData speed_control;
  * This does not measure heading or compensate wheel diameter/slip.
  * Motor_Init and Encoder_Init must already have run. */
 void SpeedControl_Start(float target_cps, uint32_t now_ms);
-/* Differential forward drive: independent positive targets <=3000 cps.
+/* Differential forward drive: independent positive targets <=SPEED_CONTROL_MAX_CPS.
  * Disables equal-count synchronization; keeps PI/feed-forward/fault checks.
  * Changing targets does NOT reset encoder totals, filters, or integrators. */
 void SpeedControl_StartDifferential(float left_cps, float right_cps, uint32_t now_ms);
 void SpeedControl_SetDifferentialTargets(float left_cps, float right_cps);
+/* Explicit initial-stripe synchronization only. Auto-expires at 700 ms,
+ * 400 mean counts, or the first unequal steering command. */
+void SpeedControl_SetLaunchSync(uint8_t enabled);
 /* Call after Encoder_Update, frequently from the same main-loop context. */
 void SpeedControl_Update(uint32_t now_ms);
 /* Stops immediately, clears integral, retains fault and last feedback. */
 void SpeedControl_Stop(void);
+/* Explicit bounded final-position mode; signed targets, including zero.
+ * Normal line following remains positive-only. No encoder reset here. */
+void SpeedControl_EnterParking(void);
+/* Separate in-place-turn profile: same signed +/-450 cps targets and
+ * 2-second no-feedback stop, but PWM <=55% and integral <=25%. */
+void SpeedControl_EnterTurn(void);
+void SpeedControl_SetParkingTargets(float left_cps, float right_cps);
 
 #endif

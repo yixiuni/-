@@ -72,6 +72,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/Modules/speed_control.c
     Core/Src/Modules/button.c
     Core/Src/Modules/car.c
+    Core/Src/Modules/task_key.c
+    Core/Src/Modules/position_stop.c
+    Core/Src/Modules/lap_counter.c
+    Core/Src/Modules/task2.c
+    Core/Src/Modules/oled.c
     Core/Src/Modules/line_follow.c
     Core/Src/Modules/line_sensor.c
     Core/Src/Modules/line_calibration.c
@@ -80,4 +85,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/Modules
+)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/Modules/imu_heading.c
+    Core/Src/Modules/imu_mpu6050.c
+    Core/Src/Modules/imu_test.c
+)
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/Modules/mode2.c
+    Core/Src/Modules/mode2_control.c
 )
