@@ -244,10 +244,9 @@ static void StartRun(uint32_t now_ms)
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 }
 
-void Car_Init(void)
+void Car_Activate(uint32_t now)
 {
-    Motor_Init();
-    Encoder_Init();
+    Encoder_Reset(now);
     SpeedControl_Stop();
     motor_test_result = (MotorTestResult){
         .magic = 0x43313042U, .version = 3U, .state = CAR_WAITING,
@@ -331,4 +330,27 @@ void Car_Update(uint32_t now_ms)
     {
         RecordSample(now_ms);
     }
+}
+
+void Car_Init(void)
+{
+    Motor_Init();Encoder_Init();Car_Activate(HAL_GetTick());
+}
+uint8_t Car_RemoteStart(uint32_t now)
+{
+    if (motor_test_result.state==CAR_RUNNING || LineCalibration_IsActive() || ReadUserButton()) return 0U;
+    task_key=(TaskKey){0};Button_Init(&user_button,ReadUserButton(),now);
+    ObserveStart(now);LineFollow_Update(now);StartRun(now);
+    return motor_test_result.state==CAR_RUNNING;
+}
+void Car_RemoteStop(uint32_t now)
+{
+    if (motor_test_result.state==CAR_RUNNING) { LineFollow_Stop(LF_STOP_USER,now);FinishRun(now); }
+    if (LineCalibration_IsActive()) LineCalibration_Cancel();
+    SpeedControl_Stop();Motor_Brake();
+    task_key=(TaskKey){0};Button_Init(&user_button,ReadUserButton(),now);task_key_hint=0U;
+}
+uint8_t Car_KeyPending(void)
+{
+    return ReadUserButton() || user_button.stable || user_button.candidate || task_key.tracking || task_key.waiting;
 }

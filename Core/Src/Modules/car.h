@@ -37,4 +37,8 @@ extern volatile MotorTestResult motor_test_result;
 void Car_Init(void);
 /* Poll continuously from the main loop. No blocking delays. */
 void Car_Update(uint32_t now_ms);
+void Car_Activate(uint32_t now);
+uint8_t Car_RemoteStart(uint32_t now);
+void Car_RemoteStop(uint32_t now);
+uint8_t Car_KeyPending(void);
 #endif

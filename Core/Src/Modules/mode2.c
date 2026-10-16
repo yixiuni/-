@@ -162,11 +162,7 @@ void Mode2_Update(uint32_t now)
                 static const float angles[]={90.0f,-90.0f,0.0f,45.0f,180.0f};
                 angle_index=(angle_index+1U)%5U;(void)Mode2_SetTargets(angles[angle_index],control.length_mm);
             } else {
-                Brake();speed_control.fault=0U;
-                record_frozen=max_gyro_age=0U;
-                Imu_GyroTestBegin(now);
-                Mode2Input start=Input(now);Mode2Control_Begin(&control,&start);
-                if (start.gyro_state!=GYRO_TEST_SETTLE) Mode2Control_Fail(&control,M2_SENSOR,now);
+                (void)Mode2_RemoteStart(now);
             }
         }
     }
@@ -177,4 +173,23 @@ void Mode2_Update(uint32_t now)
     if (control.state!=phase_before_update || control.state>=M2_DONE || (uint32_t)(now-last_publish)>=20U) Publish(now,&in);
     if ((uint32_t)(now-last_draw)>=200U && OLED_CanDraw()) { Draw(&in);last_draw=now; }
     OLED_Update(now);
+}
+
+const Mode2Control *Mode2_GetControl(void) { return &control; }
+uint8_t Mode2_KeyPending(void) { return Pressed() || key.stable || key.candidate || tracking; }
+uint8_t Mode2_RemoteStart(uint32_t now)
+{
+    if (Mode2Control_Active(&control) || Pressed()) return 0U;
+    Brake();speed_control.fault=0U;record_frozen=max_gyro_age=0U;
+    tracking=consumed=0U;Button_Init(&key,Pressed(),now);
+    Imu_GyroTestBegin(now);
+    Mode2Input start=Input(now);Mode2Control_Begin(&control,&start);
+    if (start.gyro_state!=GYRO_TEST_SETTLE) Mode2Control_Fail(&control,M2_SENSOR,now);
+    return control.state==M2_CALIBRATING;
+}
+void Mode2_RemoteStop(uint32_t now)
+{
+    if (Mode2Control_Active(&control)) Mode2Control_Stop(&control,now);
+    Brake();tracking=consumed=0U;Button_Init(&key,Pressed(),now);
+    MirrorStoppedGuard(now);
 }

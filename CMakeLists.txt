@@ -96,3 +96,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/Modules/mode2.c
     Core/Src/Modules/mode2_control.c
 )
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/Modules/bt_protocol.c
+    Core/Src/Modules/bt_uart.c
+    Core/Src/Modules/task4.c
+)
