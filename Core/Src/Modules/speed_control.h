@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #define SPEED_CONTROL_MAX_CPS 3200U
+#define SPEED_CONTROL_TURN_MAX_CPS 1200U
 
 typedef enum
 {
@@ -62,9 +63,13 @@ void SpeedControl_Stop(void);
 /* Explicit bounded final-position mode; signed targets, including zero.
  * Normal line following remains positive-only. No encoder reset here. */
 void SpeedControl_EnterParking(void);
-/* Separate in-place-turn profile: same signed +/-450 cps targets and
- * 2-second no-feedback stop, but PWM <=55% and integral <=25%. */
+/* Mode-2 moving handoff: match the last PWM within parking limits rather
+ * than clearing learned drive effort. No encoder/filter/reference reset. */
+void SpeedControl_EnterParkingContinuous(void);
+/* In-place turn: opposite signed targets <=1200 cps, paired encoder travel
+ * synchronization, PWM <=65%, and 400 ms no-feedback after startup grace. */
 void SpeedControl_EnterTurn(void);
+void SpeedControl_SetTurnTargets(float left_cps, float right_cps);
 void SpeedControl_SetParkingTargets(float left_cps, float right_cps);
 
 #endif

@@ -10,7 +10,8 @@
 #include "oled.h"
 #include "task2.h"
 #include "odometry_config.h"
-volatile uint32_t mode2_diag[64];
+#include "mode2_distance_config.h"
+volatile uint32_t mode2_diag[96];
 static Mode2Control control;
 static Button_State key;
 static uint32_t press_ms,last_draw,last_publish,last_encoder_sample,actuator_mode,angle_index;
@@ -34,22 +35,16 @@ static Mode2Input Input(uint32_t now)
 static void Brake(void) { SpeedControl_Stop();Motor_Brake();actuator_mode=0U; }
 static void Apply(uint32_t now)
 {
-    uint32_t wanted=control.state==M2_DRIVE ? 2U : ((control.state==M2_TURN || control.state==M2_PARK) ? 1U : 0U);
+    uint32_t wanted=control.state==M2_DRIVE ? 2U : (control.state==M2_TURN ? 1U : 0U);
     if (!wanted) { if (actuator_mode || speed_control.running) Brake();return; }
     if (actuator_mode!=wanted) {
-        if (actuator_mode==2U && wanted==1U) SpeedControl_EnterParking();
-        else {
-            SpeedControl_StartDifferential(wanted==2U ? control.left_target : 450.0f,
-                                           wanted==2U ? control.right_target : 450.0f,now);
-            last_encoder_sample=encoder_data.sample_count;
-            if (wanted==1U && speed_control.running) {
-                if (control.state==M2_TURN) SpeedControl_EnterTurn();
-                else SpeedControl_EnterParking();
-            }
-        }
+        SpeedControl_StartDifferential(wanted==2U ? control.left_target : 450.0f,
+                                       wanted==2U ? control.right_target : 450.0f,now);
+        last_encoder_sample=encoder_data.sample_count;
+        if (wanted==1U && speed_control.running) SpeedControl_EnterTurn();
         actuator_mode=wanted;
     }
-    if (wanted==1U) SpeedControl_SetParkingTargets(control.left_target,control.right_target);
+    if (wanted==1U) SpeedControl_SetTurnTargets(control.left_target,control.right_target);
     else SpeedControl_SetDifferentialTargets(control.left_target,control.right_target);
     SpeedControl_Update(now);
     if (speed_control.fault) { Mode2Control_Fail(&control,M2_SPEED_FAULT,now);Brake(); }
@@ -68,7 +63,7 @@ static void Publish(uint32_t now,const Mode2Input *in)
     if (record_frozen) return;
     uint32_t terminal=control.state==M2_DONE || control.state==M2_STOPPED || control.state==M2_FAULT;
     uint32_t seq=(mode2_diag[2]+2U)&~1U;mode2_diag[2]=seq-1U;
-    mode2_diag[0]=0x4D324431U;mode2_diag[1]=3U;mode2_diag[3]=control.state;mode2_diag[4]=control.fault;
+    mode2_diag[0]=0x4D324431U;mode2_diag[1]=7U;mode2_diag[3]=control.state;mode2_diag[4]=control.fault;
     mode2_diag[5]=(uint32_t)(int32_t)(control.angle*1000.0f);mode2_diag[6]=(uint32_t)control.length_mm;
     mode2_diag[7]=(uint32_t)(int32_t)((in->yaw-control.yaw_origin)*1000.0f);
     mode2_diag[8]=(uint32_t)(int32_t)(in->rate*1000.0f);
@@ -95,7 +90,24 @@ static void Publish(uint32_t now,const Mode2Input *in)
         mode2_diag[49]=(uint32_t)speed_fault_data.left_integral_milli;mode2_diag[50]=(uint32_t)speed_fault_data.right_integral_milli;
         mode2_diag[51]=speed_fault_data.fault;
     }
-    mode2_diag[31]=seq;mode2_diag[63]=seq;mode2_diag[2]=seq;last_publish=now;
+    mode2_diag[52]=control.final_brakes;mode2_diag[53]=control.brake_ms;
+    mode2_diag[54]=(uint32_t)(int32_t)control.brake_distance_mm;
+    mode2_diag[55]=(uint32_t)(int32_t)control.brake_left_cps;
+    mode2_diag[56]=(uint32_t)(int32_t)control.brake_right_cps;
+    mode2_diag[57]=(uint32_t)(int32_t)control.brake_remaining_mm;
+    mode2_diag[58]=control.final_brakes ? (uint32_t)(int32_t)((control.distance_mm-control.brake_distance_mm)*1000.0f) : 0U;
+    mode2_diag[59]=control.max_drive_still_ms;
+    mode2_diag[60]=1U; /* Continuous forward loop, no automatic post-brake retry. */
+    mode2_diag[61]=(uint32_t)(MODE2_STRAIGHT_DISTANCE_SCALE*1000000.0f+0.5f);
+    mode2_diag[62]=MODE2_DISTANCE_PROVISIONAL;
+    mode2_diag[64]=0x54524E31U;
+    mode2_diag[65]=(uint32_t)(int32_t)(control.turn_left_travel*ODOMETRY_LEFT_COUNTS_PER_MM);
+    mode2_diag[66]=(uint32_t)(int32_t)(control.turn_right_travel*ODOMETRY_RIGHT_COUNTS_PER_MM);
+    mode2_diag[67]=(uint32_t)(control.turn_max_mismatch_mm*1000.0f);
+    mode2_diag[68]=(uint32_t)control.turn_peak_left_cps;mode2_diag[69]=(uint32_t)control.turn_peak_right_cps;
+    mode2_diag[70]=control.turn_elapsed_ms;mode2_diag[71]=SPEED_CONTROL_TURN_MAX_CPS;
+    for (uint32_t i=72U;i<95U;i++) mode2_diag[i]=0U;
+    mode2_diag[31]=seq;mode2_diag[63]=seq;mode2_diag[95]=seq;mode2_diag[2]=seq;last_publish=now;
     record_frozen=terminal;
 }
 static void SignedDecimal(uint32_t row,uint32_t col,int32_t milli)
@@ -112,7 +124,7 @@ static void Draw(const Mode2Input *in)
     OLED_Text(1,0,"TARGET DEG:");OLED_Number(1,12,(int32_t)control.angle);
     OLED_Text(2,0,"YAW DEG:");SignedDecimal(2,9,(int32_t)((in->yaw-control.yaw_origin)*1000.0f));
     OLED_Text(3,0,"MM:");OLED_Number(3,4,(int32_t)control.distance_mm);OLED_Text(3,10,"/");OLED_Number(3,12,(int32_t)control.length_mm);
-    OLED_Text(4,0,"MM/S:");OLED_Number(4,6,(int32_t)((in->left_cps/ODOMETRY_LEFT_COUNTS_PER_MM+in->right_cps/ODOMETRY_RIGHT_COUNTS_PER_MM)*0.5f));
+    OLED_Text(4,0,"MM/S:");OLED_Number(4,6,(int32_t)((in->left_cps/ODOMETRY_LEFT_COUNTS_PER_MM+in->right_cps/ODOMETRY_RIGHT_COUNTS_PER_MM)*0.5f*MODE2_STRAIGHT_DISTANCE_SCALE));
     if (control.state==M2_CALIBRATING) { OLED_Text(5,0,"CAL:");OLED_Number(5,5,(int32_t)imu_gyro_test[5]);OLED_Text(5,10,"/400"); }
     else { OLED_Text(5,0,"F:");OLED_Number(5,3,(int32_t)control.fault);OLED_Text(5,7,"S:");OLED_Number(5,10,(int32_t)speed_control.fault); }
     OLED_Text(6,0,"CLICK RUN/STOP HOLD A");

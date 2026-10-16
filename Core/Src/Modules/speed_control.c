@@ -35,6 +35,8 @@ static uint32_t left_motion_ms;
 static uint32_t right_motion_ms;
 static uint32_t left_reverse_counts;
 static uint32_t right_reverse_counts;
+static int64_t turn_left_origin,turn_right_origin;
+static uint32_t turn_left_wrong,turn_right_wrong;
 
 static float Clamp(float value, float minimum, float maximum)
 {
@@ -150,11 +152,38 @@ void SpeedControl_EnterParking(void)
 void SpeedControl_EnterTurn(void)
 {
     SpeedControl_EnterParking();
-    if (speed_control.running) parking_mode=2U;
+    if (speed_control.running) {
+        parking_mode=2U;turn_left_origin=encoder_data.left_total;turn_right_origin=encoder_data.right_total;
+        turn_left_wrong=turn_right_wrong=0U;
+    }
+}
+void SpeedControl_SetTurnTargets(float left,float right)
+{
+    float maximum=(float)SPEED_CONTROL_TURN_MAX_CPS;
+    uint8_t opposite=(left<0.0f && right>0.0f) || (left>0.0f && right<0.0f);
+    if (parking_mode!=2U || !speed_control.running || !opposite ||
+        !(left>=-maximum && left<=maximum && right>=-maximum && right<=maximum)) {
+        StopWithFault(SPEED_FAULT_BAD_TARGET);return;
+    }
+    speed_control.requested_left_cps=left;speed_control.requested_right_cps=right;
+    speed_control.requested_cps=(left+right)*0.5f;
+}
+static float ParkingIntegralForOutput(float reference,float measured,float ff,int32_t output)
+{
+    if (reference==0.0f) return 0.0f;
+    float base=ff*reference+(reference>0.0f ? 18.0f : -18.0f)+SPEED_KP*(reference-measured);
+    return Clamp(Clamp((float)output,-40.0f,40.0f)-base,-15.0f,15.0f);
+}
+void SpeedControl_EnterParkingContinuous(void)
+{
+    if (!speed_control.running || !speed_control.differential_mode) { StopWithFault(SPEED_FAULT_BAD_TARGET);return; }
+    left_integral=ParkingIntegralForOutput(speed_control.left_reference_cps,speed_control.left_cps,LEFT_FEED_FORWARD,speed_control.left_pwm);
+    right_integral=ParkingIntegralForOutput(speed_control.right_reference_cps,speed_control.right_cps,RIGHT_FEED_FORWARD,speed_control.right_pwm);
+    parking_mode=1U;launch_sync=0U;
 }
 void SpeedControl_SetParkingTargets(float left, float right)
 {
-    if (!parking_mode || !speed_control.running || !(left>=-450.0f && left<=450.0f && right>=-450.0f && right<=450.0f)) {
+    if (parking_mode!=1U || !speed_control.running || !(left>=-450.0f && left<=450.0f && right>=-450.0f && right<=450.0f)) {
         StopWithFault(SPEED_FAULT_BAD_TARGET);return;
     }
     speed_control.requested_left_cps=left;speed_control.requested_right_cps=right;
@@ -166,9 +195,10 @@ static int32_t ParkingWheel(float reference, float measured, float dt, float ff,
     float error=reference-measured;
     /* Turning has more torque reserve than final-position parking. Only
      * EnterTurn selects it; mode-1 parking retains its original limits. */
-    float pwm_limit=parking_mode==2U ? 55.0f : 40.0f;
+    float pwm_limit=parking_mode==2U ? 65.0f : 40.0f;
     float integral_limit=parking_mode==2U ? 25.0f : 15.0f;
-    float base=ff*reference+(reference>0.0f ? 18.0f : -18.0f)+SPEED_KP*error;
+    float friction=parking_mode==2U ? 30.0f : 18.0f;
+    float base=ff*reference+(reference>0.0f ? friction : -friction)+SPEED_KP*error;
     float next=Clamp(*integral+SPEED_KI*error*dt,-integral_limit,integral_limit);
     float proposed=base+next;
     if ((proposed>=-pwm_limit && proposed<=pwm_limit) || (proposed>pwm_limit && error<0.0f) || (proposed< -pwm_limit && error>0.0f)) *integral=next;
@@ -201,6 +231,13 @@ void SpeedControl_Update(uint32_t now_ms)
 
     int32_t left_delta = encoder_data.left_delta;
     int32_t right_delta = encoder_data.right_delta;
+    if (parking_mode==2U) {
+        int32_t l=speed_control.requested_left_cps>0.0f ? left_delta : -left_delta;
+        int32_t r=speed_control.requested_right_cps>0.0f ? right_delta : -right_delta;
+        turn_left_wrong=l<0 ? turn_left_wrong+(uint32_t)(-l) : 0U;
+        turn_right_wrong=r<0 ? turn_right_wrong+(uint32_t)(-r) : 0U;
+        if (turn_left_wrong>=8U || turn_right_wrong>=8U) { StopWithFault(SPEED_FAULT_REVERSED_FEEDBACK);return; }
+    }
     if (left_delta > 0 || (parking_mode && (left_delta!=0 || speed_control.requested_left_cps==0.0f))) left_motion_ms=now_ms;
     if (right_delta > 0 || (parking_mode && (right_delta!=0 || speed_control.requested_right_cps==0.0f))) right_motion_ms=now_ms;
     left_reverse_counts = left_delta < 0 ? left_reverse_counts + (uint32_t)(-left_delta) : 0U;
@@ -212,12 +249,13 @@ void SpeedControl_Update(uint32_t now_ms)
     }
     if ((uint32_t)(now_ms - start_ms) >= START_GRACE_MS)
     {
-        if ((uint32_t)(now_ms - left_motion_ms) >= (parking_mode ? 2000U : NO_FEEDBACK_MS))
+        uint32_t no_feedback=parking_mode==2U ? 400U : (parking_mode ? 2000U : NO_FEEDBACK_MS);
+        if ((uint32_t)(now_ms - left_motion_ms) >= no_feedback)
         {
             StopWithFault(SPEED_FAULT_LEFT_NO_FEEDBACK);
             return;
         }
-        if ((uint32_t)(now_ms - right_motion_ms) >= (parking_mode ? 2000U : NO_FEEDBACK_MS))
+        if ((uint32_t)(now_ms - right_motion_ms) >= no_feedback)
         {
             StopWithFault(SPEED_FAULT_RIGHT_NO_FEEDBACK);
             return;
@@ -237,7 +275,18 @@ void SpeedControl_Update(uint32_t now_ms)
             encoder_data.left_total+encoder_data.right_total>=800 ||
             requested_difference>1.0f || requested_difference< -1.0f) launch_sync=0U;
         speed_control.sync_error_counts=speed_control.sync_trim_cps=0.0f;
-        if (launch_sync) {
+        if (parking_mode==2U) {
+            float ls=speed_control.requested_left_cps>0.0f ? 1.0f : -1.0f;
+            float rs=speed_control.requested_right_cps>0.0f ? 1.0f : -1.0f;
+            float lm=ls*speed_control.requested_left_cps,rm=rs*speed_control.requested_right_cps;
+            float cap=Clamp((lm<rm ? lm : rm)*0.35f,0.0f,300.0f);
+            speed_control.sync_error_counts=ls*(float)(encoder_data.left_total-turn_left_origin)-rs*(float)(encoder_data.right_total-turn_right_origin);
+            speed_control.sync_trim_cps=Clamp(2.0f*speed_control.sync_error_counts,-cap,cap);
+            float l=ls*Clamp(lm-speed_control.sync_trim_cps,lm*0.65f,(float)SPEED_CONTROL_TURN_MAX_CPS);
+            float r=rs*Clamp(rm+speed_control.sync_trim_cps,rm*0.65f,(float)SPEED_CONTROL_TURN_MAX_CPS);
+            speed_control.left_reference_cps=Approach(speed_control.left_reference_cps,l,step);
+            speed_control.right_reference_cps=Approach(speed_control.right_reference_cps,r,step);
+        } else if (launch_sync) {
             float reference=Approach(speed_control.reference_cps,speed_control.requested_cps,step);
             float trim_limit=Clamp(COUNT_SYNC_MAX_FRACTION*reference,0.0f,COUNT_SYNC_MAX_CPS);
             speed_control.sync_error_counts=(float)(encoder_data.left_total-encoder_data.right_total);

@@ -1,11 +1,11 @@
 #ifndef MODE2_DISTANCE_CONFIG_H
 #define MODE2_DISTANCE_CONFIG_H
-/* PROVISIONAL straight-ground scale, NOT a precision calibration.
- * Run 20261016-180458-312: old estimate 997 mm, user reports "forty-something
- * cm" after turning. Use 450 mm temporarily pending a measured repeat.
- * Applied only to mode-2 straight distance and displayed physical speed.
- * Leave mode-1 course scale and existing turn/calibration travel guards alone.
+/* Mode-2 straight-ground estimate, awaiting measured repeat validation.
+ * OneStop run 20261016-184223-538: stopped estimate 1002 mm; user reports
+ * about 50 mm short of 1000 mm, hence actual travel approximately 950 mm.
+ * Scale only the post-turn displacement and displayed physical speed.
+ * This is NOT the rejected 450/997 trial; mode-1 and turn guards are unchanged.
  */
-#define MODE2_STRAIGHT_DISTANCE_SCALE (450.0f / 997.0f)
+#define MODE2_STRAIGHT_DISTANCE_SCALE (950.0f / 1002.0f)
 #define MODE2_DISTANCE_PROVISIONAL 1U
 #endif

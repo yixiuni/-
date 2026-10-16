@@ -1,5 +1,6 @@
 #include "mode2_control.h"
 #include "imu_heading.h"
+#include "mode2_distance_config.h"
 static float Abs(float v) { return v<0.0f ? -v : v; }
 static float Clamp(float v,float lo,float hi) { return v<lo ? lo : (v>hi ? hi : v); }
 uint8_t Mode2Control_Active(const Mode2Control *m) { return m->state>=M2_CALIBRATING && m->state<=M2_FINISH_SETTLE; }
@@ -29,6 +30,16 @@ static void EnterDrive(Mode2Control *m,const Mode2Input *in)
     m->drive_left=in->left_mm;m->drive_right=in->right_mm;
     m->distance_mm=0.0f;m->remaining_mm=m->length_mm;
     m->state=M2_DRIVE;m->phase_ms=m->drive_started=in->now;
+    m->last_drive_motion_ms=in->now;
+}
+static void CommandTurn(Mode2Control *m,const Mode2Input *in)
+{
+    float desired=Clamp(m->heading_error*2.0f,-50.0f,50.0f);
+    float command=Clamp(16.0f*desired+6.0f*(desired-in->rate),-1200.0f,1200.0f);
+    /* Do not reverse merely to damp: brake/settle close to the target. */
+    if (m->heading_error>0.0f) command=Clamp(command,350.0f,1200.0f);
+    else command=Clamp(command,-1200.0f,-350.0f);
+    m->left_target=-command;m->right_target=command;
 }
 void Mode2Control_Update(Mode2Control *m,const Mode2Input *in)
 {
@@ -42,15 +53,28 @@ void Mode2Control_Update(Mode2Control *m,const Mode2Input *in)
         if (in->gyro_state!=GYRO_TEST_READOUT || !in->sensor_fresh) return;
         m->yaw_origin=m->turn_origin=in->yaw;m->turn_started=m->phase_ms=in->now;
         m->turn_left=in->left_mm;m->turn_right=in->right_mm;
+        m->turn_begin_left=in->left_mm;m->turn_begin_right=in->right_mm;
         if (Abs(m->angle)<=0.1f) EnterDrive(m,in);else m->state=M2_TURN;
     }
     if (!in->sensor_fresh || in->gyro_state!=GYRO_TEST_READOUT) { Mode2Control_Fail(m,M2_SENSOR,in->now);return; }
     m->heading_error=m->yaw_origin+m->angle-in->yaw;
     if (m->state==M2_TURN || m->state==M2_TURN_SETTLE) {
+        m->turn_left_travel=in->left_mm-m->turn_begin_left;
+        m->turn_right_travel=in->right_mm-m->turn_begin_right;
+        m->turn_elapsed_ms=in->now-m->turn_started;
+        if (Abs(in->left_cps)>m->turn_peak_left_cps) m->turn_peak_left_cps=Abs(in->left_cps);
+        if (Abs(in->right_cps)>m->turn_peak_right_cps) m->turn_peak_right_cps=Abs(in->right_cps);
+        float mismatch=Abs(Abs(m->turn_left_travel)-Abs(m->turn_right_travel));
+        if (mismatch>m->turn_max_mismatch_mm) m->turn_max_mismatch_mm=mismatch;
         if (Abs((in->left_mm-m->cal_left+in->right_mm-m->cal_right)*0.5f)>80.0f) { Mode2Control_Fail(m,M2_TURN_TRANSLATION,in->now);return; }
         if (Abs(in->left_mm-m->cal_left)+Abs(in->right_mm-m->cal_right)>1200.0f) { Mode2Control_Fail(m,M2_GYRO_RESPONSE,in->now);return; }
         if ((uint32_t)(in->now-m->turn_started)>25000U) { Mode2Control_Fail(m,M2_TURN_TIMEOUT,in->now);return; }
         if (m->state==M2_TURN) {
+            float l=Abs(in->left_mm-m->turn_left),r=Abs(in->right_mm-m->turn_right);
+            float leading=l>r ? l : r,following=l<r ? l : r;
+            if ((uint32_t)(in->now-m->phase_ms)>500U && leading>20.0f && following<leading*0.15f) {
+                Mode2Control_Fail(m,M2_TURN_WHEEL_SYNC,in->now);return;
+            }
             if ((uint32_t)(in->now-m->phase_ms)>500U && Abs(in->left_mm-m->turn_left)+Abs(in->right_mm-m->turn_right)>40.0f && Abs(in->yaw-m->turn_origin)<1.0f) {
                 Mode2Control_Fail(m,M2_GYRO_RESPONSE,in->now);return;
             }
@@ -58,46 +82,49 @@ void Mode2Control_Update(Mode2Control *m,const Mode2Input *in)
             if ((uint32_t)(in->now-m->phase_ms)>300U && direction*(in->yaw-m->turn_origin)< -Abs(direction)*5.0f) {
                 Mode2Control_Fail(m,M2_TURN_DIRECTION,in->now);return;
             }
-            if (Abs(m->heading_error)<=2.0f) { m->state=M2_TURN_SETTLE;m->phase_ms=in->now;return; }
-            float desired=Clamp(m->heading_error*2.0f,-25.0f,25.0f);
-            float command=Clamp(10.0f*desired+8.0f*(desired-in->rate),-450.0f,450.0f);
-            /* Do not reverse merely to damp: brake/settle close to the target. */
-            if (m->heading_error>0.0f) command=Clamp(command,120.0f,450.0f);
-            else command=Clamp(command,-450.0f,-120.0f);
-            m->left_target=-command;m->right_target=command;return;
+            if (Abs(m->heading_error)<=2.0f || direction*m->heading_error<=0.0f) { m->state=M2_TURN_SETTLE;m->phase_ms=in->now;return; }
+            CommandTurn(m,in);return;
         }
         if ((uint32_t)(in->now-m->phase_ms)<500U) return;
-        if (Abs(m->heading_error)<=3.0f && Abs(in->rate)<=3.0f && Abs(in->left_cps)<60.0f && Abs(in->right_cps)<60.0f) EnterDrive(m,in);
+        /* Keep braking until stationary; motion alone is not an angle error.
+         * The overall turn deadline above still bounds this wait. */
+        if (Abs(in->rate)>3.0f || Abs(in->left_cps)>=60.0f || Abs(in->right_cps)>=60.0f) return;
+        if (Abs(m->heading_error)<=3.0f) EnterDrive(m,in);
         else if (m->turn_corrections<3U) {
-            m->turn_corrections++;m->turn_origin=in->yaw;m->turn_left=in->left_mm;m->turn_right=in->right_mm;m->state=M2_TURN;m->phase_ms=in->now;return;
+            m->turn_corrections++;m->turn_origin=in->yaw;m->turn_left=in->left_mm;m->turn_right=in->right_mm;m->state=M2_TURN;m->phase_ms=in->now;
+            /* Apply runs in this same tick: TURN must already carry valid,
+             * opposite nonzero commands, including on correction entry. */
+            CommandTurn(m,in);return;
         } else { Mode2Control_Fail(m,M2_TURN_TIMEOUT,in->now);return; }
     }
-    m->distance_mm=((in->left_mm-m->drive_left)+(in->right_mm-m->drive_right))*0.5f;
+    /* Adjust only post-turn travel; retain legacy units in turn guards. */
+    m->distance_mm=((in->left_mm-m->drive_left)+(in->right_mm-m->drive_right))*0.5f*MODE2_STRAIGHT_DISTANCE_SCALE;
     m->remaining_mm=m->length_mm-m->distance_mm;
     if ((uint32_t)(in->now-m->drive_started)>30000U) { Mode2Control_Fail(m,M2_DRIVE_TIMEOUT,in->now);return; }
     if (Abs(m->heading_error)>15.0f) { Mode2Control_Fail(m,M2_HEADING,in->now);return; }
     if (m->distance_mm< -30.0f || m->remaining_mm< -80.0f) { Mode2Control_Fail(m,M2_POSITION,in->now);return; }
-    if (m->state==M2_DRIVE && m->remaining_mm<=150.0f) { m->state=M2_PARK;m->phase_ms=in->now; }
     if (m->state==M2_DRIVE) {
-        float base=Clamp(m->remaining_mm*5.0f,750.0f,1200.0f);
-        float trim=Clamp(10.0f*m->heading_error-3.0f*in->rate,-250.0f,250.0f);
+        if ((uint32_t)(in->now-m->drive_started)<700U || Abs(in->left_cps)>=60.0f || Abs(in->right_cps)>=60.0f)
+            m->last_drive_motion_ms=in->now;
+        else {
+            uint32_t gap=in->now-m->last_drive_motion_ms;
+            if (gap>m->max_drive_still_ms) m->max_drive_still_ms=gap;
+        }
+        /* One continuous forward speed-loop session. Never switch to the
+         * signed parking profile or re-energize after the final brake. */
+        if (m->remaining_mm<=4.0f) {
+            m->final_brakes++;m->brake_ms=in->now;
+            m->brake_distance_mm=m->distance_mm;m->brake_remaining_mm=m->remaining_mm;
+            m->brake_left_cps=in->left_cps;m->brake_right_cps=in->right_cps;
+            m->state=M2_FINISH_SETTLE;m->phase_ms=in->now;return;
+        }
+        float base=Clamp(m->remaining_mm*5.0f,900.0f,1200.0f);
+        float trim=Clamp(10.0f*m->heading_error-3.0f*in->rate,-150.0f,150.0f);
         m->left_target=base-trim;m->right_target=base+trim;return;
-    }
-    if (m->state==M2_PARK) {
-        if (Abs(m->remaining_mm)<=4.0f) { m->state=M2_FINISH_SETTLE;m->phase_ms=in->now;return; }
-        float base=Clamp(m->remaining_mm*6.0f,-450.0f,450.0f);
-        if (base>0.0f && base<120.0f) base=120.0f;
-        if (base<0.0f && base> -120.0f) base=-120.0f;
-        float limit=Clamp(Abs(base)*0.5f,0.0f,120.0f);
-        float trim=Clamp(8.0f*m->heading_error-2.0f*in->rate,-limit,limit);
-        m->left_target=Clamp(base-trim,-450.0f,450.0f);
-        m->right_target=Clamp(base+trim,-450.0f,450.0f);return;
     }
     if (m->state==M2_FINISH_SETTLE && (uint32_t)(in->now-m->phase_ms)>=500U) {
         if (Abs(m->remaining_mm)<=8.0f && Abs(m->heading_error)<=5.0f && Abs(in->rate)<=3.0f && Abs(in->left_cps)<60.0f && Abs(in->right_cps)<60.0f) {
             m->state=M2_DONE;m->ended=in->now;
-        } else if (m->park_corrections<2U && Abs(m->heading_error)<=5.0f) {
-            m->park_corrections++;m->state=M2_PARK;m->phase_ms=in->now;
         } else Mode2Control_Fail(m,M2_POSITION,in->now);
     }
 }
